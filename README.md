@@ -96,6 +96,7 @@ The setup wizard now includes a **Felix Framework** card (on the configured stat
 6. (Optional) Use **Configure Sentry Hooks** to enable `/hooks/<path>` mapping to `skills/sentry-hook/hook-transform.js`
 7. (Optional) Use **Test Sentry Hook** to send a sample payload and verify hook delivery end-to-end
 8. (Optional) Use **Run Felix Health Check** to run a consolidated PASS/FAIL report across files, runtime, nightly, and Sentry checks
+9. (Optional) Use **Generate + Copy Fix Plan** / **Copy Fix Plan** to produce a prioritized remediation checklist from live health results
 
 Optional toggles:
 

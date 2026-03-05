@@ -909,6 +909,85 @@ function formatFelixHealthReport(report) {
   return `${lines.join("\n")}\n`;
 }
 
+function buildFelixFixPlan(report, payload = {}) {
+  const hookPath = normalizeHookPath(payload.hookPath);
+  const timestamp = new Date().toISOString();
+  const lines = [];
+
+  lines.push("# Felix Fix Plan");
+  lines.push("");
+  lines.push(`Generated: ${timestamp}`);
+  lines.push(`Overall: ${report.ok ? "PASS" : "FAIL"}`);
+  lines.push(
+    `Counts -> pass: ${report.counts.pass}, warn: ${report.counts.warn}, fail: ${report.counts.fail}`,
+  );
+  lines.push("");
+  lines.push("## Prioritized Actions");
+
+  const byName = new Map(report.checks.map((check) => [check.name, check]));
+  const ordered = [
+    "Gateway configuration",
+    "Workspace starter files",
+    "ClawHub runtime",
+    "Nightly extraction registration",
+    "Sentry hook test",
+  ];
+
+  let idx = 1;
+  for (const name of ordered) {
+    const check = byName.get(name);
+    if (!check || check.status === "pass") continue;
+
+    if (name === "Gateway configuration") {
+      lines.push(
+        `${idx}. [ ] Fix gateway state: open /setup, run setup (or doctor), then confirm /setup/healthz reports configured=true and gatewayReachable=true.`,
+      );
+      lines.push(`   - Health detail: ${check.details}`);
+    } else if (name === "Workspace starter files") {
+      lines.push(
+        `${idx}. [ ] Re-apply Felix starter files in /setup -> Felix Framework -> "Apply Felix Starter Pack" (enable overwrite if files are stale).`,
+      );
+      lines.push(`   - File detail: ${check.details}`);
+    } else if (name === "ClawHub runtime") {
+      lines.push(
+        `${idx}. [ ] Restore ClawHub runtime access: from /setup use "Install ClawHub Skills" and retry. If it still fails, verify outbound network/npm availability.`,
+      );
+      lines.push(`   - Runtime detail: ${check.details}`);
+    } else if (name === "Nightly extraction registration") {
+      lines.push(
+        `${idx}. [ ] Register nightly extraction: /setup -> Felix Framework -> "Set Up Nightly Extraction". If still unconfirmed, use /tui and register skills/nightly-extraction.json manually.`,
+      );
+      lines.push(`   - Scheduler detail: ${check.details}`);
+    } else if (name === "Sentry hook test") {
+      lines.push(
+        `${idx}. [ ] Reconfigure and retest Sentry hooks: /setup -> "Configure Sentry Hooks", then "Test Sentry Hook" on path "${hookPath}".`,
+      );
+      lines.push(
+        `   - Target endpoint should be: /hooks/${hookPath}`,
+      );
+      lines.push(`   - Test detail: ${check.details}`);
+    }
+
+    idx += 1;
+    lines.push("");
+  }
+
+  if (idx === 1) {
+    lines.push("1. [x] No remediation needed. All Felix health checks passed.");
+    lines.push("");
+  }
+
+  lines.push("## Verification");
+  lines.push(
+    "- [ ] Run /setup -> Felix Framework -> Run Felix Health Check and confirm overall=PASS.",
+  );
+  lines.push(
+    "- [ ] Keep this plan with deployment notes for future incident recovery.",
+  );
+
+  return `${lines.join("\n")}\n`;
+}
+
 async function runFelixHealthCheck(payload = {}) {
   const checks = [];
   const diagnostics = [];
@@ -1901,6 +1980,25 @@ app.post("/setup/api/felix/health", requireSetupAuth, async (req, res) => {
     return res.status(500).json({
       ok: false,
       output: `Felix health check failed: ${String(err)}`,
+    });
+  }
+});
+
+app.post("/setup/api/felix/fix-plan", requireSetupAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const health = await runFelixHealthCheck(payload);
+    const plan = buildFelixFixPlan(health, payload);
+    return res.status(200).json({
+      ok: health.ok,
+      health,
+      plan,
+    });
+  } catch (err) {
+    log.error("felix", `fix-plan error: ${String(err)}`);
+    return res.status(500).json({
+      ok: false,
+      output: `Felix fix plan failed: ${String(err)}`,
     });
   }
 });

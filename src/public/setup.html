@@ -57,6 +57,9 @@
       felixSentryConfiguring: false,
       felixSentryTesting: false,
       felixHealthChecking: false,
+      felixFixPlanGenerating: false,
+      felixFixPlanCopying: false,
+      felixLastFixPlan: '',
       felixSentryHookPath: 'sentry',
       felixSlackBugsChannelId: '',
       felixSentrySetSlackChannel: false,
@@ -77,6 +80,33 @@
           throw new Error('HTTP ' + res.status + ': ' + (t || res.statusText));
         }
         return res.json();
+      },
+
+      async copyTextToClipboard(text) {
+        const value = String(text || '');
+        if (!value.trim()) return false;
+
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+            return true;
+          }
+        } catch (_e) {}
+
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = value;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+          return Boolean(ok);
+        } catch (_e) {
+          return false;
+        }
       },
 
       async refreshStatus() {
@@ -409,6 +439,59 @@
           this.log += '✗ Felix health check error: ' + String(e) + '\n';
         } finally {
           this.felixHealthChecking = false;
+        }
+      },
+
+      async generateAndCopyFelixFixPlan() {
+        this.felixFixPlanGenerating = true;
+        this.log += '\nGenerating Felix Fix Plan...\n';
+
+        try {
+          const payload = {
+            hookPath: this.felixSentryHookPath
+          };
+          const res = await fetch('/setup/api/felix/fix-plan', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          const plan = j.plan || '';
+          if (!plan) {
+            this.log += '✗ Fix plan generation returned no plan text\n';
+            return;
+          }
+          this.felixLastFixPlan = plan;
+          this.log += plan + '\n';
+          const copied = await this.copyTextToClipboard(plan);
+          this.log += copied
+            ? '[fix-plan] Copied to clipboard\n'
+            : '[fix-plan] Could not copy automatically (plan is in logs)\n';
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '✗ Fix plan generation error: ' + String(e) + '\n';
+        } finally {
+          this.felixFixPlanGenerating = false;
+        }
+      },
+
+      async copyFelixFixPlan() {
+        this.felixFixPlanCopying = true;
+        try {
+          if (!this.felixLastFixPlan.trim()) {
+            this.log += '[fix-plan] No cached plan yet; generating one now...\n';
+            await this.generateAndCopyFelixFixPlan();
+            return;
+          }
+          const copied = await this.copyTextToClipboard(this.felixLastFixPlan);
+          this.log += copied
+            ? '[fix-plan] Copied last fix plan to clipboard\n'
+            : '[fix-plan] Clipboard copy failed (plan remains in logs)\n';
+        } finally {
+          this.felixFixPlanCopying = false;
         }
       },
 
@@ -769,6 +852,22 @@
           <span x-show="felixHealthChecking" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
             <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
             Checking...
+          </span>
+        </button>
+
+        <button @click="generateAndCopyFelixFixPlan()" :disabled="felixFixPlanGenerating" class="action-btn">
+          <span x-show="!felixFixPlanGenerating">Generate + Copy Fix Plan</span>
+          <span x-show="felixFixPlanGenerating" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Generating...
+          </span>
+        </button>
+
+        <button @click="copyFelixFixPlan()" :disabled="felixFixPlanCopying" class="action-btn">
+          <span x-show="!felixFixPlanCopying">Copy Fix Plan</span>
+          <span x-show="felixFixPlanCopying" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Copying...
           </span>
         </button>
 
