@@ -62,6 +62,15 @@ const WORKSPACE_PROFILE_SEEDS = [
     ),
     workspaceFilename: "ABOUT_BUSINESS_BROKERAGE_MA_ADVISORY_INDUSTRY.md",
   },
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-fbx-brokerage-process.md",
+    ),
+    workspaceFilename: "ABOUT_FBX_BROKERAGE_PROCESS.md",
+  },
 ];
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
