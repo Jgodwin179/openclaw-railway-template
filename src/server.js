@@ -768,6 +768,72 @@ async function configureSentryHooks(payload = {}) {
   };
 }
 
+async function testSentryHook(payload = {}) {
+  if (!isConfigured()) {
+    return {
+      ok: false,
+      output: "[sentry-test] OpenClaw is not configured yet.\n",
+    };
+  }
+
+  await ensureGatewayRunning();
+  const hookPath = normalizeHookPath(payload.hookPath);
+  const url = `${GATEWAY_TARGET}/hooks/${hookPath}`;
+  const issueId = `test-${Date.now()}`;
+
+  const samplePayload = {
+    action: "triggered",
+    data: {
+      project: { slug: "railway-template", name: "railway-template" },
+      issue: {
+        id: issueId,
+        title: "Test Sentry event from setup UI",
+        level: "error",
+        culprit: "setup-ui/sentry-test",
+      },
+    },
+  };
+
+  const lines = [];
+  lines.push(`[sentry-test] POST ${url}`);
+  lines.push(`[sentry-test] issueId=${issueId}`);
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${OPENCLAW_GATEWAY_TOKEN}`,
+      },
+      body: JSON.stringify(samplePayload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    const text = await response.text();
+    lines.push(`[sentry-test] status=${response.status}`);
+    if (text.trim()) {
+      lines.push(`[sentry-test] response=${text.trim().slice(0, 2000)}`);
+    } else {
+      lines.push("[sentry-test] response=(empty)");
+    }
+
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      output: `${lines.join("\n")}\n`,
+    };
+  } catch (err) {
+    lines.push(`[sentry-test] error=${String(err)}`);
+    return {
+      ok: false,
+      output: `${lines.join("\n")}\n`,
+    };
+  }
+}
+
 async function syncAllowedOrigins() {
   const publicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
   if (!publicDomain) return;
@@ -1609,6 +1675,20 @@ app.post("/setup/api/felix/sentry/configure", requireSetupAuth, async (req, res)
     return res.status(500).json({
       ok: false,
       output: `Sentry setup failed: ${String(err)}`,
+    });
+  }
+});
+
+app.post("/setup/api/felix/sentry/test", requireSetupAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const result = await testSentryHook(payload);
+    return res.status(result.ok ? 200 : 500).json(result);
+  } catch (err) {
+    log.error("felix", `sentry test error: ${String(err)}`);
+    return res.status(500).json({
+      ok: false,
+      output: `Sentry hook test failed: ${String(err)}`,
     });
   }
 });
