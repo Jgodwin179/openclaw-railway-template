@@ -166,6 +166,9 @@ function getFelixWorkspaceStatus() {
     lifeProjectSummary: fs.existsSync(
       path.join(WORKSPACE_DIR, "life", "projects", "inbox", "summary.md"),
     ),
+    nightlyExtractionSpec: fs.existsSync(
+      path.join(WORKSPACE_DIR, "skills", "nightly-extraction.json"),
+    ),
     sentryHook: fs.existsSync(
       path.join(WORKSPACE_DIR, "skills", "sentry-hook", "hook-transform.js"),
     ),
@@ -533,6 +536,234 @@ async function installClawhubSkills(skills) {
 
   return {
     ok,
+    output: `${lines.join("\n")}\n`,
+  };
+}
+
+function safeWorkspacePath(relPath) {
+  const absPath = path.resolve(WORKSPACE_DIR, relPath);
+  const workspaceRoot = `${path.resolve(WORKSPACE_DIR)}${path.sep}`;
+  if (!absPath.startsWith(workspaceRoot)) {
+    throw new Error(`Unsafe workspace path: ${relPath}`);
+  }
+  return absPath;
+}
+
+function normalizeCronExpr(value) {
+  if (typeof value !== "string") return "0 23 * * *";
+  const cleaned = value.trim().replace(/\s+/g, " ");
+  if (!cleaned) return "0 23 * * *";
+  return cleaned.slice(0, 120);
+}
+
+function normalizeTimezone(value) {
+  if (typeof value !== "string") return "America/Chicago";
+  const cleaned = value.trim();
+  if (!cleaned) return "America/Chicago";
+  return /^[a-zA-Z0-9_+/-]+$/.test(cleaned)
+    ? cleaned.slice(0, 80)
+    : "America/Chicago";
+}
+
+function normalizeHookPath(value) {
+  if (typeof value !== "string") return "sentry";
+  const cleaned = value.trim().replace(/^\/+|\/+$/g, "");
+  if (!cleaned) return "sentry";
+  return cleaned
+    .split("/")
+    .map((part) =>
+      part
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, ""),
+    )
+    .filter(Boolean)
+    .join("/")
+    .slice(0, 120) || "sentry";
+}
+
+function normalizeSlackChannelId(value) {
+  if (typeof value !== "string") return "";
+  const cleaned = value.trim().toUpperCase();
+  if (!cleaned) return "";
+  return /^[A-Z0-9]+$/.test(cleaned) ? cleaned.slice(0, 40) : "";
+}
+
+function ensureSentryHookTransformExists() {
+  const relPath = "skills/sentry-hook/hook-transform.js";
+  const absPath = safeWorkspacePath(relPath);
+  if (fs.existsSync(absPath)) return relPath;
+
+  fs.mkdirSync(path.dirname(absPath), { recursive: true });
+  fs.writeFileSync(
+    absPath,
+    `export default async function transform({ body }) {
+  const issue = body?.data?.issue || body?.issue || {};
+  const project = body?.data?.project || body?.project || {};
+  const title = issue.title || issue.culprit || "Unknown Sentry issue";
+  const level = issue.level || issue.severity || "unknown";
+  const issueId = issue.id || issue.issue_id || "unknown";
+  const projectName = project.slug || project.name || "unknown-project";
+
+  const message =
+    "Sentry alert received. " +
+    "Project: " + projectName + ". " +
+    "Issue: " + title + ". " +
+    "Severity: " + level + ". " +
+    "Issue ID: " + issueId + ". " +
+    "Triage using auto-fix vs escalate rules, then propose next action.";
+
+  return {
+    kind: "agentTurn",
+    message,
+    metadata: {
+      source: "sentry",
+      issueId,
+      severity: level,
+      project: projectName,
+    },
+  };
+}
+`,
+    "utf8",
+  );
+  return relPath;
+}
+
+async function setupNightlyExtractionAutomation(payload = {}) {
+  const cronExpr = normalizeCronExpr(payload.cronExpr);
+  const tz = normalizeTimezone(payload.tz);
+  const relPath = "skills/nightly-extraction.json";
+  const absPath = safeWorkspacePath(relPath);
+
+  const jobSpec = {
+    name: "nightly-extraction",
+    schedule: { kind: "cron", expr: cronExpr, tz },
+    sessionTarget: "isolated",
+    payload: {
+      kind: "agentTurn",
+      message:
+        "Review today's conversations. Extract durable facts (decisions, relationships, status changes, milestones). " +
+        "Skip small talk and transient requests. Save facts to ~/life entities. " +
+        "Update memory/YYYY-MM-DD.md with timeline. Bump accessCount on referenced facts.",
+    },
+  };
+
+  fs.mkdirSync(path.dirname(absPath), { recursive: true });
+  fs.writeFileSync(absPath, `${JSON.stringify(jobSpec, null, 2)}\n`, "utf8");
+
+  const attempts = [
+    ["automation", "add", "--file", absPath],
+    ["cron", "add", "--file", absPath],
+    ["schedules", "add", "--file", absPath],
+    ["jobs", "add", "--file", absPath],
+    ["cron", "create", "--file", absPath],
+    ["automation", "add", "--json", JSON.stringify(jobSpec)],
+    ["cron", "add", "--json", JSON.stringify(jobSpec)],
+  ];
+
+  const lines = [];
+  let registered = false;
+  let usedArgs = null;
+
+  for (const args of attempts) {
+    const result = await runCmd(OPENCLAW_NODE, clawArgs(args), {
+      cwd: WORKSPACE_DIR,
+      timeoutMs: 60_000,
+    });
+    lines.push(`[nightly] tried: ${args.join(" ")} (exit=${result.code})`);
+    if (result.output?.trim()) {
+      lines.push(result.output.trim());
+    }
+    if (result.code === 0) {
+      registered = true;
+      usedArgs = args;
+      break;
+    }
+  }
+
+  if (!registered) {
+    lines.push(
+      "[nightly] No scheduler command variant succeeded on this OpenClaw build. " +
+      "The spec file was still saved and can be registered manually from /tui.",
+    );
+  }
+
+  return {
+    ok: true,
+    registered,
+    filePath: relPath,
+    usedArgs,
+    output: `${lines.join("\n")}\n`,
+  };
+}
+
+async function configureSentryHooks(payload = {}) {
+  const hookPath = normalizeHookPath(payload.hookPath);
+  const slackChannelId = normalizeSlackChannelId(payload.slackBugsChannelId);
+  const setSlackChannel = payload.setSlackChannel === true;
+
+  const transformRel = ensureSentryHookTransformExists();
+  const mappings = [
+    {
+      id: "sentry",
+      match: { path: hookPath },
+      transform: { module: transformRel },
+    },
+  ];
+
+  const lines = [];
+  let ok = true;
+  const steps = [
+    ["hooks.enabled", "true"],
+    ["hooks.path", "/hooks"],
+    ["hooks.transformsDir", safeWorkspacePath("skills")],
+  ];
+
+  for (const [key, value] of steps) {
+    const result = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", key, value]));
+    lines.push(`[sentry] config ${key}=${value} exit=${result.code}`);
+    if (result.code !== 0) ok = false;
+  }
+
+  const mappingsResult = await runCmd(
+    OPENCLAW_NODE,
+    clawArgs(["config", "set", "--json", "hooks.mappings", JSON.stringify(mappings)]),
+  );
+  lines.push(`[sentry] config hooks.mappings exit=${mappingsResult.code}`);
+  if (mappingsResult.code !== 0) ok = false;
+
+  if (setSlackChannel && slackChannelId) {
+    const policyResult = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["config", "set", "channels.slack.groupPolicy", "allowlist"]),
+    );
+    lines.push(`[sentry] config channels.slack.groupPolicy=allowlist exit=${policyResult.code}`);
+    if (policyResult.code !== 0) ok = false;
+
+    const channelCfg = JSON.stringify({ enabled: true, requireMention: false });
+    const channelResult = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs([
+        "config",
+        "set",
+        "--json",
+        `channels.slack.channels.${slackChannelId}`,
+        channelCfg,
+      ]),
+    );
+    lines.push(
+      `[sentry] config channels.slack.channels.${slackChannelId} exit=${channelResult.code}`,
+    );
+    if (channelResult.code !== 0) ok = false;
+  }
+
+  lines.push(`[sentry] webhook endpoint: /hooks/${hookPath}`);
+
+  return {
+    ok,
+    hookPath,
     output: `${lines.join("\n")}\n`,
   };
 }
@@ -1333,6 +1564,52 @@ app.post("/setup/api/felix/skills/install", requireSetupAuth, async (req, res) =
     return res
       .status(500)
       .json({ ok: false, output: `Skill install failed: ${String(err)}` });
+  }
+});
+
+app.post("/setup/api/felix/automation/nightly", requireSetupAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const result = await setupNightlyExtractionAutomation(payload);
+    return res.status(200).json({
+      ok: result.ok,
+      registered: result.registered,
+      filePath: result.filePath,
+      usedArgs: result.usedArgs,
+      output: result.output,
+    });
+  } catch (err) {
+    log.error("felix", `nightly automation setup error: ${String(err)}`);
+    return res.status(500).json({
+      ok: false,
+      output: `Nightly automation setup failed: ${String(err)}`,
+    });
+  }
+});
+
+app.post("/setup/api/felix/sentry/configure", requireSetupAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const result = await configureSentryHooks(payload);
+    let output = result.output;
+
+    if (result.ok && isConfigured() && payload.restartGateway !== false) {
+      output += "\n[sentry] restarting gateway to apply hook config...\n";
+      await restartGateway();
+      output += "[sentry] gateway restarted.\n";
+    }
+
+    return res.status(result.ok ? 200 : 500).json({
+      ok: result.ok,
+      hookPath: result.hookPath,
+      output,
+    });
+  } catch (err) {
+    log.error("felix", `sentry configure error: ${String(err)}`);
+    return res.status(500).json({
+      ok: false,
+      output: `Sentry setup failed: ${String(err)}`,
+    });
   }
 });
 

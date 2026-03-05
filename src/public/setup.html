@@ -51,6 +51,13 @@
       felixApplying: false,
       felixSkillsInstalling: false,
       felixSkillsCsv: 'github, weather, himalaya',
+      felixAutomationRunning: false,
+      felixCronExpr: '0 23 * * *',
+      felixCronTz: 'America/Chicago',
+      felixSentryConfiguring: false,
+      felixSentryHookPath: 'sentry',
+      felixSlackBugsChannelId: '',
+      felixSentrySetSlackChannel: false,
 
       get currentGroup() {
         return this.authGroups.find(g => g.value === this.selectedGroup);
@@ -290,6 +297,65 @@
           this.log += '✗ Skill install error: ' + String(e) + '\n';
         } finally {
           this.felixSkillsInstalling = false;
+        }
+      },
+
+      async setupFelixNightlyAutomation() {
+        this.felixAutomationRunning = true;
+        this.log += '\nConfiguring nightly memory extraction automation...\n';
+
+        try {
+          const payload = {
+            cronExpr: this.felixCronExpr,
+            tz: this.felixCronTz
+          };
+          const res = await fetch('/setup/api/felix/automation/nightly', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+          if (j.registered === false) {
+            this.log += '[nightly] Scheduler registration not confirmed. Use /tui to run the suggested command manually if needed.\n';
+          }
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '✗ Nightly automation setup error: ' + String(e) + '\n';
+        } finally {
+          this.felixAutomationRunning = false;
+        }
+      },
+
+      async configureFelixSentry() {
+        this.felixSentryConfiguring = true;
+        this.log += '\nConfiguring Sentry webhook hooks...\n';
+
+        try {
+          const payload = {
+            hookPath: this.felixSentryHookPath,
+            slackBugsChannelId: this.felixSlackBugsChannelId,
+            setSlackChannel: this.felixSentrySetSlackChannel,
+            restartGateway: true
+          };
+          const res = await fetch('/setup/api/felix/sentry/configure', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '✗ Sentry setup error: ' + String(e) + '\n';
+        } finally {
+          this.felixSentryConfiguring = false;
         }
       },
 
@@ -589,6 +655,51 @@
           <span x-show="felixSkillsInstalling" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
             <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
             Installing...
+          </span>
+        </button>
+
+        <div class="form-group mt-4">
+          <label class="label">Nightly extraction cron expression</label>
+          <input x-model="felixCronExpr" type="text" class="input" placeholder="0 23 * * *" />
+          <p class="form-hint">Default runs daily at 11:00 PM.</p>
+        </div>
+
+        <div class="form-group">
+          <label class="label">Nightly extraction timezone</label>
+          <input x-model="felixCronTz" type="text" class="input" placeholder="America/Chicago" />
+        </div>
+
+        <button @click="setupFelixNightlyAutomation()" :disabled="felixAutomationRunning" class="action-btn">
+          <span x-show="!felixAutomationRunning">Set Up Nightly Extraction</span>
+          <span x-show="felixAutomationRunning" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Configuring...
+          </span>
+        </button>
+
+        <div class="form-group mt-4">
+          <label class="label">Sentry webhook path</label>
+          <input x-model="felixSentryHookPath" type="text" class="input" placeholder="sentry" />
+          <p class="form-hint">Final endpoint becomes <code class="code-inline">/hooks/&lt;path&gt;</code>.</p>
+        </div>
+
+        <div class="form-group">
+          <label class="label">Slack bugs channel ID (optional)</label>
+          <input x-model="felixSlackBugsChannelId" type="text" class="input" placeholder="C0123456789" />
+        </div>
+
+        <div class="form-group" style="display:flex;gap:1rem;flex-wrap:wrap">
+          <label class="text-sm text-muted" style="display:flex;align-items:center;gap:0.5rem">
+            <input x-model="felixSentrySetSlackChannel" type="checkbox" />
+            Configure Slack channel with requireMention=false
+          </label>
+        </div>
+
+        <button @click="configureFelixSentry()" :disabled="felixSentryConfiguring" class="action-btn">
+          <span x-show="!felixSentryConfiguring">Configure Sentry Hooks</span>
+          <span x-show="felixSentryConfiguring" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Configuring...
           </span>
         </button>
 

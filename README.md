@@ -92,6 +92,8 @@ The setup wizard now includes a **Felix Framework** card (on the configured stat
 2. In **Felix Framework**, set your AI name/role fields
 3. Click **Apply Felix Starter Pack**
 4. (Optional) Use **Install ClawHub Skills** to install comma-separated skill names directly from `/setup`
+5. (Optional) Use **Set Up Nightly Extraction** to write/register a daily memory extraction job spec
+6. (Optional) Use **Configure Sentry Hooks** to enable `/hooks/<path>` mapping to `skills/sentry-hook/hook-transform.js`
 
 Optional toggles:
 
@@ -103,6 +105,23 @@ Advanced config applies Felix-inspired defaults for:
 - Internal hooks (`boot-md`, `command-logger`, `session-memory`)
 - QMD memory backend paths (`~/life` markdown + json indexing)
 - Gateway Chat Completions endpoint enablement
+
+### Nightly extraction setup notes
+
+The UI writes `skills/nightly-extraction.json` and then attempts multiple scheduler command variants for compatibility across OpenClaw versions.
+
+If your build does not support those commands, the setup output will still include the saved file path so you can register it manually via `/tui`.
+
+### Sentry hook setup notes
+
+The Sentry action configures:
+
+- `hooks.enabled=true`
+- `hooks.path=/hooks`
+- `hooks.transformsDir=/data/workspace/skills`
+- `hooks.mappings=[{ id:"sentry", match:{ path:"<path>" }, transform:{ module:"skills/sentry-hook/hook-transform.js" } }]`
+
+Optional Slack channel wiring is also available for a `#bugs`-style channel (`requireMention=false`) when you provide a Slack channel ID.
 
 ## Local testing
 
