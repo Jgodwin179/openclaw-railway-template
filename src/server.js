@@ -2003,6 +2003,29 @@ app.post("/setup/api/felix/fix-plan", requireSetupAuth, async (req, res) => {
   }
 });
 
+app.post("/setup/api/felix/fix-plan/download", requireSetupAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const health = await runFelixHealthCheck(payload);
+    const plan = buildFelixFixPlan(health, payload);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const filename = `felix-fix-plan-${timestamp}.md`;
+
+    res.set({
+      "Content-Type": "text/markdown; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Cache-Control": "no-store",
+    });
+    return res.status(200).send(plan);
+  } catch (err) {
+    log.error("felix", `fix-plan download error: ${String(err)}`);
+    return res.status(500).json({
+      ok: false,
+      output: `Felix fix plan download failed: ${String(err)}`,
+    });
+  }
+});
+
 app.get("/setup/api/devices", requireSetupAuth, async (_req, res) => {
   const args = ["devices", "list", "--json", "--token", OPENCLAW_GATEWAY_TOKEN];
   const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
