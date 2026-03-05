@@ -35,6 +35,15 @@ const WORKSPACE_PROFILE_SEEDS = [
     ),
     workspaceFilename: "ABOUT_FLORIDA_BUSINESS_EXCHANGE.md",
   },
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-b2bleadgen-ai.md",
+    ),
+    workspaceFilename: "ABOUT_B2BLEADGEN_AI.md",
+  },
 ];
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
