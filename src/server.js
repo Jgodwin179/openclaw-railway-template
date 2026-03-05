@@ -699,6 +699,58 @@ async function setupNightlyExtractionAutomation(payload = {}) {
   };
 }
 
+async function detectNightlyRegistration() {
+  const attempts = [
+    ["automation", "list", "--json"],
+    ["cron", "list", "--json"],
+    ["schedules", "list", "--json"],
+    ["jobs", "list", "--json"],
+    ["automation", "list"],
+    ["cron", "list"],
+    ["schedules", "list"],
+    ["jobs", "list"],
+  ];
+
+  const traces = [];
+  let commandWorked = false;
+  let found = false;
+
+  for (const args of attempts) {
+    const result = await runCmd(OPENCLAW_NODE, clawArgs(args), {
+      cwd: WORKSPACE_DIR,
+      timeoutMs: 45_000,
+    });
+    traces.push(`[nightly-check] ${args.join(" ")} exit=${result.code}`);
+    if (result.code !== 0) {
+      continue;
+    }
+
+    commandWorked = true;
+    const output = result.output || "";
+    if (output.includes("nightly-extraction")) {
+      found = true;
+      break;
+    }
+
+    if (args.includes("--json")) {
+      try {
+        const parsed = JSON.parse(output);
+        const text = JSON.stringify(parsed);
+        if (text.includes("nightly-extraction")) {
+          found = true;
+          break;
+        }
+      } catch {}
+    }
+  }
+
+  return {
+    commandWorked,
+    found,
+    output: `${traces.join("\n")}\n`,
+  };
+}
+
 async function configureSentryHooks(payload = {}) {
   const hookPath = normalizeHookPath(payload.hookPath);
   const slackChannelId = normalizeSlackChannelId(payload.slackBugsChannelId);
@@ -832,6 +884,152 @@ async function testSentryHook(payload = {}) {
       output: `${lines.join("\n")}\n`,
     };
   }
+}
+
+function formatFelixHealthReport(report) {
+  const lines = [];
+  lines.push("[felix-health] Summary");
+  lines.push(
+    `[felix-health] overall=${report.ok ? "PASS" : "FAIL"} pass=${report.counts.pass} warn=${report.counts.warn} fail=${report.counts.fail}`,
+  );
+  lines.push("");
+  lines.push("[felix-health] Checks");
+  for (const check of report.checks) {
+    lines.push(`[${check.status.toUpperCase()}] ${check.name} - ${check.details}`);
+  }
+  lines.push("");
+  lines.push("[felix-health] Diagnostics");
+  if (report.diagnostics.length === 0) {
+    lines.push("(none)");
+  } else {
+    for (const diag of report.diagnostics) {
+      lines.push(diag);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+async function runFelixHealthCheck(payload = {}) {
+  const checks = [];
+  const diagnostics = [];
+
+  const workspaceStatus = getFelixWorkspaceStatus();
+  const missingFiles = Object.entries(workspaceStatus.checks)
+    .filter(([, present]) => !present)
+    .map(([name]) => name);
+  checks.push({
+    name: "Workspace starter files",
+    status: missingFiles.length === 0 ? "pass" : "fail",
+    details:
+      missingFiles.length === 0
+        ? "All Felix scaffolding files are present."
+        : `Missing checks: ${missingFiles.join(", ")}`,
+  });
+
+  if (!isConfigured()) {
+    checks.push({
+      name: "Gateway configuration",
+      status: "fail",
+      details: "OpenClaw is not configured yet.",
+    });
+  } else {
+    try {
+      await ensureGatewayRunning();
+      checks.push({
+        name: "Gateway configuration",
+        status: "pass",
+        details: "Gateway is configured and running.",
+      });
+    } catch (err) {
+      checks.push({
+        name: "Gateway configuration",
+        status: "fail",
+        details: `Gateway failed readiness check: ${String(err)}`,
+      });
+    }
+  }
+
+  const skillRuntime = await runCmd(
+    "npx",
+    ["--yes", "clawhub@latest", "--version"],
+    { cwd: WORKSPACE_DIR, timeoutMs: 60_000 },
+  );
+  const skillRuntimeOk = skillRuntime.code === 0;
+  checks.push({
+    name: "ClawHub runtime",
+    status: skillRuntimeOk ? "pass" : "fail",
+    details: skillRuntimeOk
+      ? "clawhub CLI is reachable via npx."
+      : `clawhub runtime failed (exit=${skillRuntime.code}).`,
+  });
+  if (skillRuntime.output?.trim()) {
+    diagnostics.push(
+      `[skills-runtime]\n${skillRuntime.output.trim().slice(0, 1200)}`,
+    );
+  }
+
+  const nightlySpecExists = fs.existsSync(
+    safeWorkspacePath("skills/nightly-extraction.json"),
+  );
+  const nightlyRegistration = await detectNightlyRegistration();
+  if (nightlyRegistration.found) {
+    checks.push({
+      name: "Nightly extraction registration",
+      status: "pass",
+      details: "nightly-extraction job is visible in scheduler output.",
+    });
+  } else if (nightlySpecExists && nightlyRegistration.commandWorked) {
+    checks.push({
+      name: "Nightly extraction registration",
+      status: "warn",
+      details:
+        "Spec file exists but scheduler output did not confirm registration.",
+    });
+  } else if (nightlySpecExists) {
+    checks.push({
+      name: "Nightly extraction registration",
+      status: "warn",
+      details:
+        "Spec file exists but scheduler listing commands are unsupported on this build.",
+    });
+  } else {
+    checks.push({
+      name: "Nightly extraction registration",
+      status: "fail",
+      details: "skills/nightly-extraction.json is missing.",
+    });
+  }
+  diagnostics.push(`[nightly-registration]\n${nightlyRegistration.output.trim()}`);
+
+  const sentryResult = await testSentryHook({
+    hookPath: payload.hookPath,
+  });
+  checks.push({
+    name: "Sentry hook test",
+    status: sentryResult.ok ? "pass" : "fail",
+    details: sentryResult.ok
+      ? "Sample Sentry payload accepted by hook endpoint."
+      : "Sample Sentry payload failed. See diagnostics.",
+  });
+  diagnostics.push(`[sentry-test]\n${(sentryResult.output || "").trim()}`);
+
+  const counts = {
+    pass: checks.filter((c) => c.status === "pass").length,
+    warn: checks.filter((c) => c.status === "warn").length,
+    fail: checks.filter((c) => c.status === "fail").length,
+  };
+
+  const report = {
+    ok: counts.fail === 0,
+    counts,
+    checks,
+    diagnostics,
+  };
+
+  return {
+    ...report,
+    output: formatFelixHealthReport(report),
+  };
 }
 
 async function syncAllowedOrigins() {
@@ -1689,6 +1887,20 @@ app.post("/setup/api/felix/sentry/test", requireSetupAuth, async (req, res) => {
     return res.status(500).json({
       ok: false,
       output: `Sentry hook test failed: ${String(err)}`,
+    });
+  }
+});
+
+app.post("/setup/api/felix/health", requireSetupAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const result = await runFelixHealthCheck(payload);
+    return res.status(result.ok ? 200 : 500).json(result);
+  } catch (err) {
+    log.error("felix", `health check error: ${String(err)}`);
+    return res.status(500).json({
+      ok: false,
+      output: `Felix health check failed: ${String(err)}`,
     });
   }
 });

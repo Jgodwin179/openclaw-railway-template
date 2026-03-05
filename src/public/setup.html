@@ -56,6 +56,7 @@
       felixCronTz: 'America/Chicago',
       felixSentryConfiguring: false,
       felixSentryTesting: false,
+      felixHealthChecking: false,
       felixSentryHookPath: 'sentry',
       felixSlackBugsChannelId: '',
       felixSentrySetSlackChannel: false,
@@ -382,6 +383,32 @@
           this.log += '✗ Sentry test error: ' + String(e) + '\n';
         } finally {
           this.felixSentryTesting = false;
+        }
+      },
+
+      async runFelixHealthCheck() {
+        this.felixHealthChecking = true;
+        this.log += '\nRunning Felix Health Check...\n';
+
+        try {
+          const payload = {
+            hookPath: this.felixSentryHookPath
+          };
+          const res = await fetch('/setup/api/felix/health', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '✗ Felix health check error: ' + String(e) + '\n';
+        } finally {
+          this.felixHealthChecking = false;
         }
       },
 
@@ -734,6 +761,14 @@
           <span x-show="felixSentryTesting" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
             <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
             Testing...
+          </span>
+        </button>
+
+        <button @click="runFelixHealthCheck()" :disabled="felixHealthChecking" class="action-btn">
+          <span x-show="!felixHealthChecking">Run Felix Health Check</span>
+          <span x-show="felixHealthChecking" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Checking...
           </span>
         </button>
 
