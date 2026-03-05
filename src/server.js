@@ -53,6 +53,15 @@ const WORKSPACE_PROFILE_SEEDS = [
     ),
     workspaceFilename: "ABOUT_LEADTOOL_AI.md",
   },
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-business-brokerage-ma-advisory-industry.md",
+    ),
+    workspaceFilename: "ABOUT_BUSINESS_BROKERAGE_MA_ADVISORY_INDUSTRY.md",
+  },
 ];
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
