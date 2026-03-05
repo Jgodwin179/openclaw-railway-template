@@ -16,6 +16,62 @@ const STATE_DIR =
 const WORKSPACE_DIR =
   process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||
   path.join(STATE_DIR, "workspace");
+const WORKSPACE_PROFILE_SEEDS = [
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-jason-godwin.md",
+    ),
+    workspaceFilename: "ABOUT_JASON_GODWIN.md",
+  },
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-florida-business-exchange.md",
+    ),
+    workspaceFilename: "ABOUT_FLORIDA_BUSINESS_EXCHANGE.md",
+  },
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-b2bleadgen-ai.md",
+    ),
+    workspaceFilename: "ABOUT_B2BLEADGEN_AI.md",
+  },
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-leadtool-ai.md",
+    ),
+    workspaceFilename: "ABOUT_LEADTOOL_AI.md",
+  },
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-business-brokerage-ma-advisory-industry.md",
+    ),
+    workspaceFilename: "ABOUT_BUSINESS_BROKERAGE_MA_ADVISORY_INDUSTRY.md",
+  },
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-fbx-brokerage-process.md",
+    ),
+    workspaceFilename: "ABOUT_FBX_BROKERAGE_PROCESS.md",
+  },
+];
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
 
@@ -1111,6 +1167,31 @@ async function runFelixHealthCheck(payload = {}) {
   };
 }
 
+function ensureWorkspaceProfiles() {
+  const seededPaths = [];
+  const failedPaths = [];
+
+  fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+
+  for (const seed of WORKSPACE_PROFILE_SEEDS) {
+    const targetPath = path.join(WORKSPACE_DIR, seed.workspaceFilename);
+    try {
+      if (fs.existsSync(targetPath)) {
+        continue;
+      }
+      const profileContent = fs.readFileSync(seed.templatePath, "utf8");
+      fs.writeFileSync(targetPath, profileContent, "utf8");
+      seededPaths.push(targetPath);
+    } catch (err) {
+      const reason = err?.code || err?.message || String(err);
+      failedPaths.push({ targetPath, reason });
+      log.warn("workspace-profile", `failed to seed ${targetPath}: ${reason}`);
+    }
+  }
+
+  return { seededPaths, failedPaths };
+}
+
 async function syncAllowedOrigins() {
   const publicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
   if (!publicDomain) return;
@@ -1624,11 +1705,16 @@ if (payload.authChoice && !VALID_AUTH_CHOICES.includes(payload.authChoice)) {
 app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
   try {
     if (isConfigured()) {
+      const seededProfiles = ensureWorkspaceProfiles();
       await ensureGatewayRunning();
       return res.json({
         ok: true,
         output:
-          "Already configured.\nUse Reset setup if you want to rerun onboarding.\n",
+          `Already configured.\n` +
+          (seededProfiles.seededPaths.length
+            ? `[setup] Added profile file(s):\n${seededProfiles.seededPaths.map((p) => `- ${p}`).join("\n")}\n`
+            : "") +
+          "Use Reset setup if you want to rerun onboarding.\n",
       });
     }
 
@@ -1649,6 +1735,12 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     const ok = onboard.code === 0 && isConfigured();
 
     if (ok) {
+      const seededProfiles = ensureWorkspaceProfiles();
+      if (seededProfiles.seededPaths.length) {
+        extra += `[setup] Added profile file(s):\n${seededProfiles.seededPaths
+          .map((profilePath) => `- ${profilePath}`)
+          .join("\n")}\n`;
+      }
       extra += "\n[setup] Configuring gateway settings...\n";
 
       const allowInsecureResult = await runCmd(
@@ -2365,6 +2457,13 @@ const server = app.listen(PORT, () => {
   log.info("wrapper", `setup wizard: http://localhost:${PORT}/setup`);
   log.info("wrapper", `web TUI: ${ENABLE_WEB_TUI ? "enabled" : "disabled"}`);
   log.info("wrapper", `configured: ${isConfigured()}`);
+  const seededProfiles = ensureWorkspaceProfiles();
+  if (seededProfiles.seededPaths.length) {
+    log.info(
+      "workspace-profile",
+      `added profile file(s): ${seededProfiles.seededPaths.join(", ")}`,
+    );
+  }
 
   if (isConfigured()) {
     (async () => {
