@@ -77,6 +77,32 @@ The web TUI implements multiple security layers:
 | `TUI_IDLE_TIMEOUT_MS` | `300000` (5 min) | Closes session after inactivity |
 | `TUI_MAX_SESSION_MS` | `1800000` (30 min) | Maximum session duration |
 
+## Felix Framework Starter Pack
+
+The setup wizard now includes a **Felix Framework** card (on the configured state page) that can scaffold:
+
+- `SOUL.md`, `IDENTITY.md`, `MEMORY.md`, `AGENTS.md`, `SAFETY_RULES.md`
+- Daily memory templates under `memory/`
+- PARA-style knowledge folders under `life/`
+- Skill starter files under `skills/` (including a Sentry hook transform template)
+
+### One-click usage
+
+1. Open `/setup`
+2. In **Felix Framework**, set your AI name/role fields
+3. Click **Apply Felix Starter Pack**
+
+Optional toggles:
+
+- **Overwrite existing Felix files** (off by default)
+- **Apply advanced OpenClaw config defaults** (on by default)
+
+Advanced config applies Felix-inspired defaults for:
+
+- Internal hooks (`boot-md`, `command-logger`, `session-memory`)
+- QMD memory backend paths (`~/life` markdown + json indexing)
+- Gateway Chat Completions endpoint enablement
+
 ## Local testing
 
 ```bash
