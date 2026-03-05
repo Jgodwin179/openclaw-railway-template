@@ -16,6 +16,13 @@ const STATE_DIR =
 const WORKSPACE_DIR =
   process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||
   path.join(STATE_DIR, "workspace");
+const AUTHOR_PROFILE_TEMPLATE_PATH = path.join(
+  process.cwd(),
+  "src",
+  "templates",
+  "about-jason-godwin.md",
+);
+const AUTHOR_PROFILE_WORKSPACE_FILENAME = "ABOUT_JASON_GODWIN.md";
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
 
@@ -145,6 +152,25 @@ function isConfigured() {
     return fs.existsSync(configPath());
   } catch {
     return false;
+  }
+}
+
+function ensureAuthorProfileInWorkspace() {
+  const targetPath = path.join(WORKSPACE_DIR, AUTHOR_PROFILE_WORKSPACE_FILENAME);
+
+  try {
+    if (fs.existsSync(targetPath)) {
+      return { wrote: false, targetPath };
+    }
+
+    const profileContent = fs.readFileSync(AUTHOR_PROFILE_TEMPLATE_PATH, "utf8");
+    fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+    fs.writeFileSync(targetPath, profileContent, "utf8");
+    return { wrote: true, targetPath };
+  } catch (err) {
+    const reason = err?.code || err?.message || String(err);
+    log.warn("workspace-profile", `failed to seed author profile: ${reason}`);
+    return { wrote: false, targetPath, error: reason };
   }
 }
 
@@ -640,11 +666,15 @@ if (payload.authChoice && !VALID_AUTH_CHOICES.includes(payload.authChoice)) {
 app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
   try {
     if (isConfigured()) {
+      const seededProfile = ensureAuthorProfileInWorkspace();
       await ensureGatewayRunning();
       return res.json({
         ok: true,
-        output:
-          "Already configured.\nUse Reset setup if you want to rerun onboarding.\n",
+        output: `Already configured.\n${
+          seededProfile.wrote
+            ? `Profile file added at ${seededProfile.targetPath}.\n`
+            : ""
+        }Use Reset setup if you want to rerun onboarding.\n`,
       });
     }
 
@@ -665,6 +695,10 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     const ok = onboard.code === 0 && isConfigured();
 
     if (ok) {
+      const seededProfile = ensureAuthorProfileInWorkspace();
+      if (seededProfile.wrote) {
+        extra += `[setup] Added profile file: ${seededProfile.targetPath}\n`;
+      }
       extra += "\n[setup] Configuring gateway settings...\n";
 
       const allowInsecureResult = await runCmd(
@@ -1178,6 +1212,10 @@ const server = app.listen(PORT, () => {
   log.info("wrapper", `setup wizard: http://localhost:${PORT}/setup`);
   log.info("wrapper", `web TUI: ${ENABLE_WEB_TUI ? "enabled" : "disabled"}`);
   log.info("wrapper", `configured: ${isConfigured()}`);
+  const seededProfile = ensureAuthorProfileInWorkspace();
+  if (seededProfile.wrote) {
+    log.info("workspace-profile", `added profile file at ${seededProfile.targetPath}`);
+  }
 
   if (isConfigured()) {
     (async () => {
