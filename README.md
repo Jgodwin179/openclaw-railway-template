@@ -91,6 +91,7 @@ The setup wizard now includes a **Felix Framework** card (on the configured stat
 1. Open `/setup`
 2. In **Felix Framework**, set your AI name/role fields
 3. Click **Apply Felix Starter Pack**
+4. (Optional) Use **Install ClawHub Skills** to install comma-separated skill names directly from `/setup`
 
 Optional toggles:
 

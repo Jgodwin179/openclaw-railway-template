@@ -464,6 +464,7 @@ function writeFelixBootstrapFiles(files, options = {}) {
 
 async function applyFelixOpenClawConfig() {
   const lines = [];
+  let allSucceeded = true;
   const steps = [
     ["hooks.internal.enabled", "true"],
     ["hooks.internal.entries.boot-md.enabled", "true"],
@@ -480,6 +481,7 @@ async function applyFelixOpenClawConfig() {
       OPENCLAW_NODE,
       clawArgs(["config", "set", key, value]),
     );
+    if (result.code !== 0) allSucceeded = false;
     lines.push(`[config] ${key}=${value} exit=${result.code}`);
   }
 
@@ -491,10 +493,46 @@ async function applyFelixOpenClawConfig() {
     OPENCLAW_NODE,
     clawArgs(["config", "set", "--json", "memory.qmd.paths", qmdPaths]),
   );
+  if (qmdPathsResult.code !== 0) allSucceeded = false;
   lines.push(`[config] memory.qmd.paths exit=${qmdPathsResult.code}`);
 
   return {
-    ok: lines.every((line) => !line.endsWith("exit=1")),
+    ok: allSucceeded,
+    output: `${lines.join("\n")}\n`,
+  };
+}
+
+const FELIX_RECOMMENDED_SKILLS = ["github", "weather", "himalaya"];
+
+function normalizeSkillList(input) {
+  if (!Array.isArray(input) || input.length === 0) {
+    return [...FELIX_RECOMMENDED_SKILLS];
+  }
+  const unique = [...new Set(input.map((v) => String(v || "").trim()).filter(Boolean))];
+  const valid = unique.filter((name) => /^[a-zA-Z0-9._/-]+$/.test(name));
+  return valid.slice(0, 10);
+}
+
+async function installClawhubSkills(skills) {
+  const lines = [];
+  let ok = true;
+
+  for (const skill of skills) {
+    lines.push(`[skills] installing ${skill}...`);
+    const result = await runCmd(
+      "npx",
+      ["--yes", "clawhub@latest", "install", skill],
+      { cwd: WORKSPACE_DIR, timeoutMs: 180_000 },
+    );
+    lines.push(`[skills] ${skill} exit=${result.code}`);
+    if (result.output?.trim()) {
+      lines.push(result.output.trim());
+    }
+    if (result.code !== 0) ok = false;
+  }
+
+  return {
+    ok,
     output: `${lines.join("\n")}\n`,
   };
 }
@@ -929,8 +967,12 @@ function buildOnboardArgs(payload) {
 
 function runCmd(cmd, args, opts = {}) {
   return new Promise((resolve) => {
+    const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 0;
+    const spawnOpts = { ...opts };
+    delete spawnOpts.timeoutMs;
+
     const proc = childProcess.spawn(cmd, args, {
-      ...opts,
+      ...spawnOpts,
       env: {
         ...process.env,
         OPENCLAW_STATE_DIR: STATE_DIR,
@@ -939,15 +981,31 @@ function runCmd(cmd, args, opts = {}) {
     });
 
     let out = "";
+    let timedOut = false;
+    let timer = null;
     proc.stdout?.on("data", (d) => (out += d.toString("utf8")));
     proc.stderr?.on("data", (d) => (out += d.toString("utf8")));
 
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        out += `\n[timeout] command exceeded ${timeoutMs}ms and was terminated\n`;
+        try {
+          proc.kill("SIGTERM");
+        } catch {}
+      }, timeoutMs);
+    }
+
     proc.on("error", (err) => {
+      if (timer) clearTimeout(timer);
       out += `\n[spawn error] ${String(err)}\n`;
       resolve({ code: 127, output: out });
     });
 
-    proc.on("close", (code) => resolve({ code: code ?? 0, output: out }));
+    proc.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      resolve({ code: timedOut ? 124 : (code ?? 0), output: out });
+    });
   });
 }
 
@@ -1250,6 +1308,31 @@ app.post("/setup/api/felix/bootstrap", requireSetupAuth, async (req, res) => {
     return res
       .status(500)
       .json({ ok: false, output: `Felix bootstrap failed: ${String(err)}` });
+  }
+});
+
+app.post("/setup/api/felix/skills/install", requireSetupAuth, async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const skills = normalizeSkillList(payload.skills);
+    if (skills.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        output: "No valid skill names provided.",
+      });
+    }
+
+    const result = await installClawhubSkills(skills);
+    return res.status(result.ok ? 200 : 500).json({
+      ok: result.ok,
+      output: result.output,
+      installed: skills,
+    });
+  } catch (err) {
+    log.error("felix", `skill install error: ${String(err)}`);
+    return res
+      .status(500)
+      .json({ ok: false, output: `Skill install failed: ${String(err)}` });
   }
 });
 

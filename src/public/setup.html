@@ -49,6 +49,8 @@
       felixOverwrite: false,
       felixConfigureOpenclaw: true,
       felixApplying: false,
+      felixSkillsInstalling: false,
+      felixSkillsCsv: 'github, weather, himalaya',
 
       get currentGroup() {
         return this.authGroups.find(g => g.value === this.selectedGroup);
@@ -262,6 +264,32 @@
           this.log += '✗ Felix bootstrap error: ' + String(e) + '\n';
         } finally {
           this.felixApplying = false;
+        }
+      },
+
+      async installFelixSkills() {
+        this.felixSkillsInstalling = true;
+        this.log += '\nInstalling Felix recommended ClawHub skills...\n';
+
+        try {
+          const skills = this.felixSkillsCsv
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
+          const res = await fetch('/setup/api/felix/skills/install', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ skills })
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+        } catch (e) {
+          this.log += '✗ Skill install error: ' + String(e) + '\n';
+        } finally {
+          this.felixSkillsInstalling = false;
         }
       },
 
@@ -548,6 +576,19 @@
           <span x-show="felixApplying" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
             <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
             Applying...
+          </span>
+        </button>
+
+        <div class="form-group mt-4">
+          <label class="label">ClawHub skills to install (comma-separated)</label>
+          <input x-model="felixSkillsCsv" type="text" class="input" placeholder="github, weather, himalaya" />
+        </div>
+
+        <button @click="installFelixSkills()" :disabled="felixSkillsInstalling" class="action-btn">
+          <span x-show="!felixSkillsInstalling">Install ClawHub Skills</span>
+          <span x-show="felixSkillsInstalling" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Installing...
           </span>
         </button>
 
