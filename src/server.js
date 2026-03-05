@@ -174,6 +174,8 @@ const GATEWAY_TARGET = `http://${INTERNAL_GATEWAY_HOST}:${INTERNAL_GATEWAY_PORT}
 const OPENCLAW_ENTRY =
   process.env.OPENCLAW_ENTRY?.trim() || "/openclaw/dist/entry.js";
 const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
+const CODING_WORKER_AGENT_ID = "coding-worker";
+const CODING_WORKER_AGENT_NAME = "Coding Worker";
 
 const ENABLE_WEB_TUI = process.env.ENABLE_WEB_TUI?.toLowerCase() === "true";
 const TUI_IDLE_TIMEOUT_MS = Number.parseInt(
@@ -1466,8 +1468,9 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
     {
       value: "openai",
       label: "OpenAI",
-      hint: "API key",
+      hint: "Codex OAuth + API key",
       options: [
+        { value: "openai-codex", label: "OpenAI Codex (ChatGPT OAuth)" },
         { value: "openai-api-key", label: "OpenAI API key" },
       ],
     },
@@ -1571,6 +1574,9 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
 });
 
 function buildOnboardArgs(payload) {
+  const requestedAuthChoice = payload.authChoice === "openai-codex"
+    ? "skip"
+    : payload.authChoice;
   const args = [
     "onboard",
     "--non-interactive",
@@ -1592,8 +1598,8 @@ function buildOnboardArgs(payload) {
     "quickstart",
   ];
 
-  if (payload.authChoice) {
-    args.push("--auth-choice", payload.authChoice);
+  if (requestedAuthChoice) {
+    args.push("--auth-choice", requestedAuthChoice);
 
     const secret = (payload.authSecret || "").trim();
     const map = {
@@ -1664,7 +1670,176 @@ function runCmd(cmd, args, opts = {}) {
   });
 }
 
+function parseJsonFromOutput(output) {
+  const text = String(output || "").trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {}
+
+  const start = text.search(/[\[{]/);
+  if (start === -1) return null;
+  const candidates = ["]", "}"];
+  for (let end = text.length; end > start; end--) {
+    if (!candidates.includes(text[end - 1])) continue;
+    const maybeJson = text.slice(start, end);
+    try {
+      return JSON.parse(maybeJson);
+    } catch {}
+  }
+  return null;
+}
+
+function toUniqueStringList(values) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .filter((value) => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function findDefaultAgentIndex(agents) {
+  if (!Array.isArray(agents) || agents.length === 0) return -1;
+  const flaggedIndex = agents.findIndex((agent) => agent?.default === true);
+  if (flaggedIndex >= 0) return flaggedIndex;
+  return agents.findIndex((agent) => typeof agent?.id === "string");
+}
+
+async function configureCodingWorkerAgent(options = {}) {
+  const desiredModel = typeof options.model === "string" ? options.model.trim() : "";
+  let output = "\n[setup] Configuring coding worker agent...\n";
+  const failures = [];
+
+  async function setConfig(pathKey, value, opts = {}) {
+    const strictJson = opts.strictJson === true;
+    const label = opts.label || pathKey;
+    const args = ["config", "set", pathKey, value];
+    if (strictJson) args.push("--strict-json");
+    const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
+    output += `[config] ${label} exit=${result.code}\n`;
+    if (result.code !== 0) {
+      failures.push(label);
+      if (result.output?.trim()) {
+        output += `${result.output.trim()}\n`;
+      }
+    }
+    return result;
+  }
+
+  const agentsResult = await runCmd(OPENCLAW_NODE, clawArgs(["agents", "list", "--json"]));
+  output += `[agents list] exit=${agentsResult.code}\n`;
+  if (agentsResult.code !== 0) {
+    if (agentsResult.output?.trim()) {
+      output += `${agentsResult.output.trim()}\n`;
+    }
+    return { ok: false, output };
+  }
+
+  const agents = parseJsonFromOutput(agentsResult.output);
+  if (!Array.isArray(agents) || agents.length === 0) {
+    output += "[coding-agent] No agents were returned by `openclaw agents list --json`.\n";
+    return { ok: false, output };
+  }
+
+  const defaultAgentIndex = findDefaultAgentIndex(agents);
+  if (defaultAgentIndex < 0) {
+    output += "[coding-agent] Could not determine a default agent.\n";
+    return { ok: false, output };
+  }
+  const defaultAgent = agents[defaultAgentIndex];
+  const defaultAgentId =
+    typeof defaultAgent?.id === "string" && defaultAgent.id.trim()
+      ? defaultAgent.id.trim()
+      : "main";
+
+  const defaultAllowAgents = toUniqueStringList([
+    ...(Array.isArray(defaultAgent?.subagents?.allowAgents)
+      ? defaultAgent.subagents.allowAgents
+      : []),
+    defaultAgentId,
+    CODING_WORKER_AGENT_ID,
+  ]);
+  await setConfig(
+    `agents.list[${defaultAgentIndex}].subagents.allowAgents`,
+    JSON.stringify(defaultAllowAgents),
+    {
+      strictJson: true,
+      label: `agents.list[${defaultAgentIndex}].subagents.allowAgents`,
+    },
+  );
+
+  let codingAgentIndex = agents.findIndex((agent) => agent?.id === CODING_WORKER_AGENT_ID);
+  if (codingAgentIndex < 0) {
+    codingAgentIndex = agents.length;
+    const codingAgent = {
+      id: CODING_WORKER_AGENT_ID,
+      name: CODING_WORKER_AGENT_NAME,
+      workspace: WORKSPACE_DIR,
+      tools: {
+        profile: "coding",
+        deny: ["gateway", "cron"],
+      },
+      subagents: {
+        allowAgents: [CODING_WORKER_AGENT_ID],
+      },
+    };
+    if (desiredModel) {
+      codingAgent.model = desiredModel;
+    }
+    await setConfig(
+      `agents.list[${codingAgentIndex}]`,
+      JSON.stringify(codingAgent),
+      { strictJson: true, label: "create coding-worker agent" },
+    );
+  } else {
+    const codingAgent = agents[codingAgentIndex] || {};
+    const denyTools = toUniqueStringList([
+      ...(Array.isArray(codingAgent?.tools?.deny) ? codingAgent.tools.deny : []),
+      "gateway",
+      "cron",
+    ]);
+    const allowAgents = toUniqueStringList([
+      ...(Array.isArray(codingAgent?.subagents?.allowAgents)
+        ? codingAgent.subagents.allowAgents
+        : []),
+      CODING_WORKER_AGENT_ID,
+    ]);
+
+    await setConfig(`agents.list[${codingAgentIndex}].tools.profile`, "coding");
+    await setConfig(
+      `agents.list[${codingAgentIndex}].tools.deny`,
+      JSON.stringify(denyTools),
+      { strictJson: true },
+    );
+    await setConfig(
+      `agents.list[${codingAgentIndex}].subagents.allowAgents`,
+      JSON.stringify(allowAgents),
+      { strictJson: true },
+    );
+    await setConfig(
+      `agents.list[${codingAgentIndex}].name`,
+      CODING_WORKER_AGENT_NAME,
+    );
+    if (desiredModel) {
+      await setConfig(`agents.list[${codingAgentIndex}].model`, desiredModel);
+    }
+  }
+
+  if (failures.length === 0) {
+    output += `[setup] Coding worker agent '${CODING_WORKER_AGENT_ID}' is ready.\n`;
+  } else {
+    output += `[setup] Coding worker agent setup had errors in: ${failures.join(", ")}\n`;
+  }
+
+  return { ok: failures.length === 0, output };
+}
+
 const VALID_AUTH_CHOICES = [
+  "openai-codex",
   "openai-api-key",
   "apiKey",
   "gemini-api-key",
@@ -1683,7 +1858,7 @@ const VALID_AUTH_CHOICES = [
 ];
 
 function validatePayload(payload) {
-if (payload.authChoice && !VALID_AUTH_CHOICES.includes(payload.authChoice)) {
+  if (payload.authChoice && !VALID_AUTH_CHOICES.includes(payload.authChoice)) {
     return `Invalid authChoice: ${payload.authChoice}`;
   }
   const stringFields = [
@@ -1693,11 +1868,18 @@ if (payload.authChoice && !VALID_AUTH_CHOICES.includes(payload.authChoice)) {
     "slackAppToken",
     "authSecret",
     "model",
+    "codingAgentModel",
   ];
   for (const field of stringFields) {
     if (payload[field] !== undefined && typeof payload[field] !== "string") {
       return `Invalid ${field}: must be a string`;
     }
+  }
+  if (
+    payload.enableCodingAgent !== undefined &&
+    typeof payload.enableCodingAgent !== "boolean"
+  ) {
+    return "Invalid enableCodingAgent: must be a boolean";
   }
   return null;
 }
@@ -1784,6 +1966,13 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           clawArgs(["models", "set", payload.model.trim()]),
         );
         extra += `[models set] exit=${modelResult.code}\n${modelResult.output || ""}`;
+      } else if (payload.authChoice === "openai-codex") {
+        extra += "[setup] Setting default model to openai-codex/gpt-5.3-codex...\n";
+        const oauthModelResult = await runCmd(
+          OPENCLAW_NODE,
+          clawArgs(["models", "set", "openai-codex/gpt-5.3-codex"]),
+        );
+        extra += `[models set] exit=${oauthModelResult.code}\n${oauthModelResult.output || ""}`;
       }
 
       async function configureChannel(name, cfgObj) {
@@ -1832,6 +2021,22 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           botToken: payload.slackBotToken?.trim() || undefined,
           appToken: payload.slackAppToken?.trim() || undefined,
         });
+      }
+
+      if (payload.enableCodingAgent !== false) {
+        const codingAgentResult = await configureCodingWorkerAgent({
+          model: payload.codingAgentModel,
+        });
+        extra += codingAgentResult.output;
+      } else {
+        extra += "\n[setup] Skipping coding worker agent setup.\n";
+      }
+
+      if (payload.authChoice === "openai-codex") {
+        extra +=
+          "\n[setup] OpenAI Codex OAuth requires an interactive login.\n" +
+          "[setup] Complete it in terminal with:\n" +
+          "openclaw models auth login --provider openai-codex\n";
       }
 
       extra += "\n[setup] Starting gateway...\n";
@@ -1913,6 +2118,47 @@ app.post("/setup/api/doctor", requireSetupAuth, async (_req, res) => {
     ok: result.code === 0,
     output: result.output,
   });
+});
+
+app.post("/setup/api/agents/coding", requireSetupAuth, async (req, res) => {
+  try {
+    if (!isConfigured()) {
+      return res.status(400).json({
+        ok: false,
+        output: "OpenClaw is not configured yet. Run setup first.",
+      });
+    }
+
+    const payload = req.body || {};
+    if (payload.model !== undefined && typeof payload.model !== "string") {
+      return res.status(400).json({
+        ok: false,
+        output: "Invalid model: must be a string",
+      });
+    }
+
+    const result = await configureCodingWorkerAgent({
+      model: payload.model,
+    });
+    let output = result.output;
+
+    if (result.ok) {
+      output += "\n[setup] Restarting gateway to apply coding worker changes...\n";
+      await restartGateway();
+      output += "[setup] Gateway restarted.\n";
+    }
+
+    return res.status(result.ok ? 200 : 500).json({
+      ok: result.ok,
+      output,
+    });
+  } catch (err) {
+    log.error("setup", `coding-agent setup error: ${String(err)}`);
+    return res.status(500).json({
+      ok: false,
+      output: `Internal error: ${String(err)}`,
+    });
+  }
 });
 
 app.get("/setup/api/felix/status", requireSetupAuth, async (_req, res) => {

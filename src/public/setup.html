@@ -26,6 +26,8 @@
       slackBotToken: '',
       slackAppToken: '',
       model: '',
+      enableCodingAgent: true,
+      codingAgentModel: '',
       log: '',
       loading: false,
       pairingChannel: '',
@@ -156,6 +158,8 @@
           authChoice: this.selectedAuth,
           authSecret: this.authSecret,
           model: this.model,
+          enableCodingAgent: this.enableCodingAgent,
+          codingAgentModel: this.codingAgentModel,
           telegramToken: this.telegramToken,
           discordToken: this.discordToken,
           slackBotToken: this.slackBotToken,
@@ -304,6 +308,34 @@
           this.log += '✗ Felix bootstrap error: ' + String(e) + '\n';
         } finally {
           this.felixApplying = false;
+        }
+      },
+      
+      async setupCodingAgent() {
+        this.log += '\nConfiguring coding worker agent...\n';
+        this.loading = true;
+
+        try {
+          const res = await fetch('/setup/api/agents/coding', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ model: this.codingAgentModel })
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2));
+          if (j.ok) {
+            this.log += '\n✓ Coding worker agent is ready\n';
+          } else {
+            this.log += '\n✗ Coding worker setup failed\n';
+          }
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '\n✗ Error: ' + String(e) + '\n';
+        } finally {
+          this.loading = false;
         }
       },
 
@@ -735,6 +767,24 @@
         <h3 class="card-title" style="font-size:1rem">Maintenance</h3>
         <p class="card-subtitle">Health checks and data export</p>
         <div class="action-grid mb-4">
+          <div class="action-card action-violet">
+            <div class="action-card-header">
+              <div class="action-icon">
+                <svg class="icon-md" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+              </div>
+              <span class="action-title">Coding Worker Agent</span>
+            </div>
+            <p class="action-desc">Create or update a dedicated coding worker that the main agent can call via sub-agents.</p>
+            <input x-model="codingAgentModel" type="text" placeholder="Optional model override (provider/model)" class="input" style="margin-bottom:0.75rem" />
+            <button @click="setupCodingAgent()" :disabled="loading" class="action-btn">
+              <span x-show="!loading">Setup Coding Worker</span>
+              <span x-show="loading" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+                <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Running...
+              </span>
+            </button>
+          </div>
+
           <div class="action-card action-amber">
             <div class="action-card-header">
               <div class="action-icon">
@@ -985,17 +1035,33 @@
                 <option :value="o.value" x-text="o.label + (o.hint ? ' — ' + o.hint : '')"></option>
               </template>
             </select>
+            <p x-show="selectedAuth === 'openai-codex'" class="form-hint">OpenAI OAuth is completed after setup with <code class="code-inline">openclaw models auth login --provider openai-codex</code>.</p>
           </div>
 
           <div class="form-group">
             <label class="label">API Key / Token</label>
             <input x-model="authSecret" type="password" placeholder="Paste your API key or token" class="input" />
+            <p class="form-hint">For OAuth methods (for example OpenAI Codex), you can leave this empty.</p>
           </div>
 
           <div class="form-group">
             <label class="label">Model</label>
             <input x-model="model" type="text" placeholder="e.g. openai/gpt-4.1, anthropic/claude-sonnet-4" class="input" />
             <p class="form-hint">Format: provider/model-name</p>
+          </div>
+
+          <div class="form-group">
+            <label class="label" style="display:flex;align-items:center;gap:0.5rem;font-weight:500">
+              <input x-model="enableCodingAgent" type="checkbox" />
+              Create coding worker agent
+            </label>
+            <p class="form-hint">Enables a dedicated <code class="code-inline">coding-worker</code> agent that your main agent can target via sub-agents.</p>
+          </div>
+
+          <div class="form-group" x-show="enableCodingAgent">
+            <label class="label">Coding Worker Model (optional)</label>
+            <input x-model="codingAgentModel" type="text" placeholder="e.g. anthropic/claude-sonnet-4-6" class="input" />
+            <p class="form-hint">Leave empty to let the coding worker inherit model defaults.</p>
           </div>
         </div>
       </div>
@@ -1065,6 +1131,14 @@
               <div class="config-row">
                 <dt>Model</dt>
                 <dd x-text="model || 'Default'"></dd>
+              </div>
+              <div class="config-row">
+                <dt>Coding Worker</dt>
+                <dd>
+                  <span x-show="enableCodingAgent" class="badge badge-indigo">Enabled</span>
+                  <span x-show="enableCodingAgent && codingAgentModel" class="text-muted" x-text="codingAgentModel"></span>
+                  <span x-show="!enableCodingAgent" class="text-muted">Disabled</span>
+                </dd>
               </div>
               <div class="config-row">
                 <dt>Channels</dt>
