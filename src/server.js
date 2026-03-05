@@ -44,6 +44,15 @@ const WORKSPACE_PROFILE_SEEDS = [
     ),
     workspaceFilename: "ABOUT_B2BLEADGEN_AI.md",
   },
+  {
+    templatePath: path.join(
+      process.cwd(),
+      "src",
+      "templates",
+      "about-leadtool-ai.md",
+    ),
+    workspaceFilename: "ABOUT_LEADTOOL_AI.md",
+  },
 ];
 
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
