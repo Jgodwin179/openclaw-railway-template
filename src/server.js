@@ -505,8 +505,9 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
     {
       value: "openai",
       label: "OpenAI",
-      hint: "API key",
+      hint: "Codex OAuth + API key",
       options: [
+        { value: "openai-codex", label: "OpenAI Codex (ChatGPT OAuth)" },
         { value: "openai-api-key", label: "OpenAI API key" },
       ],
     },
@@ -609,6 +610,9 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
 });
 
 function buildOnboardArgs(payload) {
+  const requestedAuthChoice = payload.authChoice === "openai-codex"
+    ? "skip"
+    : payload.authChoice;
   const args = [
     "onboard",
     "--non-interactive",
@@ -630,8 +634,8 @@ function buildOnboardArgs(payload) {
     "quickstart",
   ];
 
-  if (payload.authChoice) {
-    args.push("--auth-choice", payload.authChoice);
+  if (requestedAuthChoice) {
+    args.push("--auth-choice", requestedAuthChoice);
 
     const secret = (payload.authSecret || "").trim();
     const map = {
@@ -851,6 +855,7 @@ async function configureCodingWorkerAgent(options = {}) {
 }
 
 const VALID_AUTH_CHOICES = [
+  "openai-codex",
   "openai-api-key",
   "apiKey",
   "gemini-api-key",
@@ -977,6 +982,13 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           clawArgs(["models", "set", payload.model.trim()]),
         );
         extra += `[models set] exit=${modelResult.code}\n${modelResult.output || ""}`;
+      } else if (payload.authChoice === "openai-codex") {
+        extra += "[setup] Setting default model to openai-codex/gpt-5.3-codex...\n";
+        const oauthModelResult = await runCmd(
+          OPENCLAW_NODE,
+          clawArgs(["models", "set", "openai-codex/gpt-5.3-codex"]),
+        );
+        extra += `[models set] exit=${oauthModelResult.code}\n${oauthModelResult.output || ""}`;
       }
 
       async function configureChannel(name, cfgObj) {
@@ -1034,6 +1046,13 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         extra += codingAgentResult.output;
       } else {
         extra += "\n[setup] Skipping coding worker agent setup.\n";
+      }
+
+      if (payload.authChoice === "openai-codex") {
+        extra +=
+          "\n[setup] OpenAI Codex OAuth requires an interactive login.\n" +
+          "[setup] Complete it in terminal with:\n" +
+          "openclaw models auth login --provider openai-codex\n";
       }
 
       extra += "\n[setup] Starting gateway...\n";

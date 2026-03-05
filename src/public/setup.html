@@ -563,11 +563,13 @@
                 <option :value="o.value" x-text="o.label + (o.hint ? ' — ' + o.hint : '')"></option>
               </template>
             </select>
+            <p x-show="selectedAuth === 'openai-codex'" class="form-hint">OpenAI OAuth is completed after setup with <code class="code-inline">openclaw models auth login --provider openai-codex</code>.</p>
           </div>
 
           <div class="form-group">
             <label class="label">API Key / Token</label>
             <input x-model="authSecret" type="password" placeholder="Paste your API key or token" class="input" />
+            <p class="form-hint">For OAuth methods (for example OpenAI Codex), you can leave this empty.</p>
           </div>
 
           <div class="form-group">
