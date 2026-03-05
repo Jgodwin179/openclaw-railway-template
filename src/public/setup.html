@@ -40,6 +40,30 @@
       devices: [],
       devicesPending: [],
       devicesPaired: [],
+      felixInstalled: false,
+      felixStatusChecks: {},
+      felixAgentName: 'Felix',
+      felixRoleTitle: 'Chief of Staff AI',
+      felixReportsTo: 'Owner',
+      felixTrustedChannel: 'Telegram',
+      felixOverwrite: false,
+      felixConfigureOpenclaw: true,
+      felixApplying: false,
+      felixSkillsInstalling: false,
+      felixSkillsCsv: 'github, weather, himalaya',
+      felixAutomationRunning: false,
+      felixCronExpr: '0 23 * * *',
+      felixCronTz: 'America/Chicago',
+      felixSentryConfiguring: false,
+      felixSentryTesting: false,
+      felixHealthChecking: false,
+      felixFixPlanGenerating: false,
+      felixFixPlanCopying: false,
+      felixFixPlanDownloading: false,
+      felixLastFixPlan: '',
+      felixSentryHookPath: 'sentry',
+      felixSlackBugsChannelId: '',
+      felixSentrySetSlackChannel: false,
 
       get currentGroup() {
         return this.authGroups.find(g => g.value === this.selectedGroup);
@@ -59,6 +83,33 @@
         return res.json();
       },
 
+      async copyTextToClipboard(text) {
+        const value = String(text || '');
+        if (!value.trim()) return false;
+
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+            return true;
+          }
+        } catch (_e) {}
+
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = value;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+          return Boolean(ok);
+        } catch (_e) {
+          return false;
+        }
+      },
+
       async refreshStatus() {
         this.status = 'Loading...';
         try {
@@ -72,6 +123,8 @@
             this.selectedGroup = this.authGroups[0].value;
             this.updateAuthChoices();
           }
+          this.felixInstalled = Boolean(j.felixStatus && j.felixStatus.installed);
+          this.felixStatusChecks = (j.felixStatus && j.felixStatus.checks) ? j.felixStatus.checks : {};
           if (j.channelsAddHelp && j.channelsAddHelp.indexOf('telegram') === -1) {
             this.log += '\nNote: this openclaw build does not list telegram in `channels add --help`. Telegram auto-add will be skipped.\n';
           }
@@ -216,6 +269,277 @@
           this.log += 'Error: ' + String(e) + '\n';
         } finally {
           this.loading = false;
+        }
+      },
+
+      async applyFelixBootstrap() {
+        this.felixApplying = true;
+        this.log += '\nApplying Felix framework starter pack...\n';
+
+        try {
+          const payload = {
+            agentName: this.felixAgentName,
+            roleTitle: this.felixRoleTitle,
+            reportsTo: this.felixReportsTo,
+            trustedChannel: this.felixTrustedChannel,
+            overwrite: this.felixOverwrite,
+            configureOpenclaw: this.felixConfigureOpenclaw
+          };
+          const res = await fetch('/setup/api/felix/bootstrap', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+          if (j.felixStatus && j.felixStatus.checks) {
+            this.felixInstalled = Boolean(j.felixStatus.installed);
+            this.felixStatusChecks = j.felixStatus.checks;
+          }
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '✗ Felix bootstrap error: ' + String(e) + '\n';
+        } finally {
+          this.felixApplying = false;
+        }
+      },
+
+      async installFelixSkills() {
+        this.felixSkillsInstalling = true;
+        this.log += '\nInstalling Felix recommended ClawHub skills...\n';
+
+        try {
+          const skills = this.felixSkillsCsv
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
+          const res = await fetch('/setup/api/felix/skills/install', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ skills })
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+        } catch (e) {
+          this.log += '✗ Skill install error: ' + String(e) + '\n';
+        } finally {
+          this.felixSkillsInstalling = false;
+        }
+      },
+
+      async setupFelixNightlyAutomation() {
+        this.felixAutomationRunning = true;
+        this.log += '\nConfiguring nightly memory extraction automation...\n';
+
+        try {
+          const payload = {
+            cronExpr: this.felixCronExpr,
+            tz: this.felixCronTz
+          };
+          const res = await fetch('/setup/api/felix/automation/nightly', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+          if (j.registered === false) {
+            this.log += '[nightly] Scheduler registration not confirmed. Use /tui to run the suggested command manually if needed.\n';
+          }
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '✗ Nightly automation setup error: ' + String(e) + '\n';
+        } finally {
+          this.felixAutomationRunning = false;
+        }
+      },
+
+      async configureFelixSentry() {
+        this.felixSentryConfiguring = true;
+        this.log += '\nConfiguring Sentry webhook hooks...\n';
+
+        try {
+          const payload = {
+            hookPath: this.felixSentryHookPath,
+            slackBugsChannelId: this.felixSlackBugsChannelId,
+            setSlackChannel: this.felixSentrySetSlackChannel,
+            restartGateway: true
+          };
+          const res = await fetch('/setup/api/felix/sentry/configure', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '✗ Sentry setup error: ' + String(e) + '\n';
+        } finally {
+          this.felixSentryConfiguring = false;
+        }
+      },
+
+      async testFelixSentryHook() {
+        this.felixSentryTesting = true;
+        this.log += '\nTesting Sentry webhook delivery...\n';
+
+        try {
+          const payload = {
+            hookPath: this.felixSentryHookPath
+          };
+          const res = await fetch('/setup/api/felix/sentry/test', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+        } catch (e) {
+          this.log += '✗ Sentry test error: ' + String(e) + '\n';
+        } finally {
+          this.felixSentryTesting = false;
+        }
+      },
+
+      async runFelixHealthCheck() {
+        this.felixHealthChecking = true;
+        this.log += '\nRunning Felix Health Check...\n';
+
+        try {
+          const payload = {
+            hookPath: this.felixSentryHookPath
+          };
+          const res = await fetch('/setup/api/felix/health', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          this.log += (j.output || JSON.stringify(j, null, 2)) + '\n';
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '✗ Felix health check error: ' + String(e) + '\n';
+        } finally {
+          this.felixHealthChecking = false;
+        }
+      },
+
+      async generateAndCopyFelixFixPlan() {
+        this.felixFixPlanGenerating = true;
+        this.log += '\nGenerating Felix Fix Plan...\n';
+
+        try {
+          const payload = {
+            hookPath: this.felixSentryHookPath
+          };
+          const res = await fetch('/setup/api/felix/fix-plan', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const text = await res.text();
+          let j;
+          try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
+          const plan = j.plan || '';
+          if (!plan) {
+            this.log += '✗ Fix plan generation returned no plan text\n';
+            return;
+          }
+          this.felixLastFixPlan = plan;
+          this.log += plan + '\n';
+          const copied = await this.copyTextToClipboard(plan);
+          this.log += copied
+            ? '[fix-plan] Copied to clipboard\n'
+            : '[fix-plan] Could not copy automatically (plan is in logs)\n';
+          await this.refreshStatus();
+        } catch (e) {
+          this.log += '✗ Fix plan generation error: ' + String(e) + '\n';
+        } finally {
+          this.felixFixPlanGenerating = false;
+        }
+      },
+
+      async copyFelixFixPlan() {
+        this.felixFixPlanCopying = true;
+        try {
+          if (!this.felixLastFixPlan.trim()) {
+            this.log += '[fix-plan] No cached plan yet; generating one now...\n';
+            await this.generateAndCopyFelixFixPlan();
+            return;
+          }
+          const copied = await this.copyTextToClipboard(this.felixLastFixPlan);
+          this.log += copied
+            ? '[fix-plan] Copied last fix plan to clipboard\n'
+            : '[fix-plan] Clipboard copy failed (plan remains in logs)\n';
+        } finally {
+          this.felixFixPlanCopying = false;
+        }
+      },
+
+      async downloadFelixFixPlan() {
+        this.felixFixPlanDownloading = true;
+        this.log += '\nDownloading Felix Fix Plan (.md)...\n';
+
+        try {
+          const payload = {
+            hookPath: this.felixSentryHookPath
+          };
+          const res = await fetch('/setup/api/felix/fix-plan/download', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (!res.ok) {
+            const text = await res.text();
+            let j;
+            try { j = JSON.parse(text); } catch (_e) { j = { output: text }; }
+            this.log += '✗ Fix plan download failed: ' + (j.output || text) + '\n';
+            return;
+          }
+
+          const disposition = res.headers.get('content-disposition') || '';
+          const match = disposition.match(/filename="?([^"]+)"?/);
+          const filename = match ? match[1] : 'felix-fix-plan.md';
+          const markdown = await res.text();
+          this.felixLastFixPlan = markdown;
+
+          const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          this.log += '✓ Fix plan downloaded: ' + filename + '\n';
+        } catch (e) {
+          this.log += '✗ Fix plan download error: ' + String(e) + '\n';
+        } finally {
+          this.felixFixPlanDownloading = false;
         }
       },
 
@@ -460,6 +784,154 @@
         </div>
 
         <div x-show="log" class="log-output" x-text="log"></div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title" style="font-size:1rem">Felix Framework</h3>
+        <p class="card-subtitle">Apply identity, memory, safety, and skills starter files from the Felix playbook.</p>
+
+        <div class="form-group">
+          <label class="label">AI Name</label>
+          <input x-model="felixAgentName" type="text" class="input" placeholder="Felix" />
+        </div>
+
+        <div class="form-group">
+          <label class="label">Role Title</label>
+          <input x-model="felixRoleTitle" type="text" class="input" placeholder="Chief of Staff AI" />
+        </div>
+
+        <div class="form-group">
+          <label class="label">Reports To</label>
+          <input x-model="felixReportsTo" type="text" class="input" placeholder="Owner" />
+        </div>
+
+        <div class="form-group">
+          <label class="label">Trusted Command Channel</label>
+          <input x-model="felixTrustedChannel" type="text" class="input" placeholder="Telegram" />
+        </div>
+
+        <div class="form-group" style="display:flex;gap:1rem;flex-wrap:wrap">
+          <label class="text-sm text-muted" style="display:flex;align-items:center;gap:0.5rem">
+            <input x-model="felixOverwrite" type="checkbox" />
+            Overwrite existing Felix files
+          </label>
+          <label class="text-sm text-muted" style="display:flex;align-items:center;gap:0.5rem">
+            <input x-model="felixConfigureOpenclaw" type="checkbox" />
+            Apply advanced OpenClaw config defaults
+          </label>
+        </div>
+
+        <button @click="applyFelixBootstrap()" :disabled="felixApplying" class="action-btn">
+          <span x-show="!felixApplying">Apply Felix Starter Pack</span>
+          <span x-show="felixApplying" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Applying...
+          </span>
+        </button>
+
+        <div class="form-group mt-4">
+          <label class="label">ClawHub skills to install (comma-separated)</label>
+          <input x-model="felixSkillsCsv" type="text" class="input" placeholder="github, weather, himalaya" />
+        </div>
+
+        <button @click="installFelixSkills()" :disabled="felixSkillsInstalling" class="action-btn">
+          <span x-show="!felixSkillsInstalling">Install ClawHub Skills</span>
+          <span x-show="felixSkillsInstalling" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Installing...
+          </span>
+        </button>
+
+        <div class="form-group mt-4">
+          <label class="label">Nightly extraction cron expression</label>
+          <input x-model="felixCronExpr" type="text" class="input" placeholder="0 23 * * *" />
+          <p class="form-hint">Default runs daily at 11:00 PM.</p>
+        </div>
+
+        <div class="form-group">
+          <label class="label">Nightly extraction timezone</label>
+          <input x-model="felixCronTz" type="text" class="input" placeholder="America/Chicago" />
+        </div>
+
+        <button @click="setupFelixNightlyAutomation()" :disabled="felixAutomationRunning" class="action-btn">
+          <span x-show="!felixAutomationRunning">Set Up Nightly Extraction</span>
+          <span x-show="felixAutomationRunning" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Configuring...
+          </span>
+        </button>
+
+        <div class="form-group mt-4">
+          <label class="label">Sentry webhook path</label>
+          <input x-model="felixSentryHookPath" type="text" class="input" placeholder="sentry" />
+          <p class="form-hint">Final endpoint becomes <code class="code-inline">/hooks/&lt;path&gt;</code>.</p>
+        </div>
+
+        <div class="form-group">
+          <label class="label">Slack bugs channel ID (optional)</label>
+          <input x-model="felixSlackBugsChannelId" type="text" class="input" placeholder="C0123456789" />
+        </div>
+
+        <div class="form-group" style="display:flex;gap:1rem;flex-wrap:wrap">
+          <label class="text-sm text-muted" style="display:flex;align-items:center;gap:0.5rem">
+            <input x-model="felixSentrySetSlackChannel" type="checkbox" />
+            Configure Slack channel with requireMention=false
+          </label>
+        </div>
+
+        <button @click="configureFelixSentry()" :disabled="felixSentryConfiguring" class="action-btn">
+          <span x-show="!felixSentryConfiguring">Configure Sentry Hooks</span>
+          <span x-show="felixSentryConfiguring" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Configuring...
+          </span>
+        </button>
+
+        <button @click="testFelixSentryHook()" :disabled="felixSentryTesting" class="action-btn">
+          <span x-show="!felixSentryTesting">Test Sentry Hook</span>
+          <span x-show="felixSentryTesting" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Testing...
+          </span>
+        </button>
+
+        <button @click="runFelixHealthCheck()" :disabled="felixHealthChecking" class="action-btn">
+          <span x-show="!felixHealthChecking">Run Felix Health Check</span>
+          <span x-show="felixHealthChecking" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Checking...
+          </span>
+        </button>
+
+        <button @click="generateAndCopyFelixFixPlan()" :disabled="felixFixPlanGenerating" class="action-btn">
+          <span x-show="!felixFixPlanGenerating">Generate + Copy Fix Plan</span>
+          <span x-show="felixFixPlanGenerating" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Generating...
+          </span>
+        </button>
+
+        <button @click="copyFelixFixPlan()" :disabled="felixFixPlanCopying" class="action-btn">
+          <span x-show="!felixFixPlanCopying">Copy Fix Plan</span>
+          <span x-show="felixFixPlanCopying" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Copying...
+          </span>
+        </button>
+
+        <button @click="downloadFelixFixPlan()" :disabled="felixFixPlanDownloading" class="action-btn">
+          <span x-show="!felixFixPlanDownloading">Download Fix Plan (.md)</span>
+          <span x-show="felixFixPlanDownloading" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
+            <svg class="spinner-inline" fill="none" viewBox="0 0 24 24"><circle style="opacity:0.25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path style="opacity:0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Downloading...
+          </span>
+        </button>
+
+        <p class="text-xs text-muted mt-4">
+          Status:
+          <strong x-text="felixInstalled ? 'Installed' : 'Partial / Not Installed'"></strong>
+          - Files are created in your OpenClaw workspace at <code class="code-inline">/data/workspace</code>.
+        </p>
       </div>
 
       <div class="danger-card">
