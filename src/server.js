@@ -176,6 +176,8 @@ const OPENCLAW_ENTRY =
 const OPENCLAW_NODE = process.env.OPENCLAW_NODE?.trim() || "node";
 const CODING_WORKER_AGENT_ID = "coding-worker";
 const CODING_WORKER_AGENT_NAME = "Coding Worker";
+const CODING_WORKER_PROFILE_CODING = "coding";
+const CODING_WORKER_PROFILE_BROWSER_ENABLED = "default";
 
 const ENABLE_WEB_TUI = process.env.ENABLE_WEB_TUI?.toLowerCase() === "true";
 const TUI_IDLE_TIMEOUT_MS = Number.parseInt(
@@ -1711,7 +1713,12 @@ function findDefaultAgentIndex(agents) {
 
 async function configureCodingWorkerAgent(options = {}) {
   const desiredModel = typeof options.model === "string" ? options.model.trim() : "";
+  const enableBrowserTools = options.enableBrowserTools === true;
+  const toolsProfile = enableBrowserTools
+    ? CODING_WORKER_PROFILE_BROWSER_ENABLED
+    : CODING_WORKER_PROFILE_CODING;
   let output = "\n[setup] Configuring coding worker agent...\n";
+  output += `[coding-agent] tools.profile=${toolsProfile}\n`;
   const failures = [];
 
   async function setConfig(pathKey, value, opts = {}) {
@@ -1780,7 +1787,7 @@ async function configureCodingWorkerAgent(options = {}) {
       name: CODING_WORKER_AGENT_NAME,
       workspace: WORKSPACE_DIR,
       tools: {
-        profile: "coding",
+        profile: toolsProfile,
         deny: ["gateway", "cron"],
       },
       subagents: {
@@ -1801,7 +1808,10 @@ async function configureCodingWorkerAgent(options = {}) {
       ...(Array.isArray(codingAgent?.tools?.deny) ? codingAgent.tools.deny : []),
       "gateway",
       "cron",
-    ]);
+    ]).filter((toolName) => {
+      if (!enableBrowserTools) return true;
+      return toolName !== "browser";
+    });
     const allowAgents = toUniqueStringList([
       ...(Array.isArray(codingAgent?.subagents?.allowAgents)
         ? codingAgent.subagents.allowAgents
@@ -1809,7 +1819,7 @@ async function configureCodingWorkerAgent(options = {}) {
       CODING_WORKER_AGENT_ID,
     ]);
 
-    await setConfig(`agents.list[${codingAgentIndex}].tools.profile`, "coding");
+    await setConfig(`agents.list[${codingAgentIndex}].tools.profile`, toolsProfile);
     await setConfig(
       `agents.list[${codingAgentIndex}].tools.deny`,
       JSON.stringify(denyTools),
@@ -1880,6 +1890,12 @@ function validatePayload(payload) {
     typeof payload.enableCodingAgent !== "boolean"
   ) {
     return "Invalid enableCodingAgent: must be a boolean";
+  }
+  if (
+    payload.codingAgentEnableBrowser !== undefined &&
+    typeof payload.codingAgentEnableBrowser !== "boolean"
+  ) {
+    return "Invalid codingAgentEnableBrowser: must be a boolean";
   }
   return null;
 }
@@ -2026,6 +2042,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       if (payload.enableCodingAgent !== false) {
         const codingAgentResult = await configureCodingWorkerAgent({
           model: payload.codingAgentModel,
+          enableBrowserTools: payload.codingAgentEnableBrowser === true,
         });
         extra += codingAgentResult.output;
       } else {
@@ -2136,9 +2153,19 @@ app.post("/setup/api/agents/coding", requireSetupAuth, async (req, res) => {
         output: "Invalid model: must be a string",
       });
     }
+    if (
+      payload.enableBrowserTools !== undefined &&
+      typeof payload.enableBrowserTools !== "boolean"
+    ) {
+      return res.status(400).json({
+        ok: false,
+        output: "Invalid enableBrowserTools: must be a boolean",
+      });
+    }
 
     const result = await configureCodingWorkerAgent({
       model: payload.model,
+      enableBrowserTools: payload.enableBrowserTools === true,
     });
     let output = result.output;
 
