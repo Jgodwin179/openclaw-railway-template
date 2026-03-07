@@ -28,6 +28,7 @@
       model: '',
       enableCodingAgent: true,
       codingAgentModel: '',
+      codingAgentEnableBrowser: false,
       log: '',
       loading: false,
       pairingChannel: '',
@@ -160,6 +161,7 @@
           model: this.model,
           enableCodingAgent: this.enableCodingAgent,
           codingAgentModel: this.codingAgentModel,
+          codingAgentEnableBrowser: this.codingAgentEnableBrowser,
           telegramToken: this.telegramToken,
           discordToken: this.discordToken,
           slackBotToken: this.slackBotToken,
@@ -320,7 +322,10 @@
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ model: this.codingAgentModel })
+            body: JSON.stringify({
+              model: this.codingAgentModel,
+              enableBrowserTools: this.codingAgentEnableBrowser
+            })
           });
           const text = await res.text();
           let j;
@@ -776,6 +781,10 @@
             </div>
             <p class="action-desc">Create or update a dedicated coding worker that the main agent can call via sub-agents.</p>
             <input x-model="codingAgentModel" type="text" placeholder="Optional model override (provider/model)" class="input" style="margin-bottom:0.75rem" />
+            <label class="text-sm text-muted" style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem">
+              <input x-model="codingAgentEnableBrowser" type="checkbox" />
+              Enable browser-capable tool profile
+            </label>
             <button @click="setupCodingAgent()" :disabled="loading" class="action-btn">
               <span x-show="!loading">Setup Coding Worker</span>
               <span x-show="loading" style="display:inline-flex;align-items:center;justify-content:center;gap:0.5rem">
@@ -1063,6 +1072,13 @@
             <input x-model="codingAgentModel" type="text" placeholder="e.g. anthropic/claude-sonnet-4-6" class="input" />
             <p class="form-hint">Leave empty to let the coding worker inherit model defaults.</p>
           </div>
+          <div class="form-group" x-show="enableCodingAgent">
+            <label class="label" style="display:flex;align-items:center;gap:0.5rem;font-weight:500">
+              <input x-model="codingAgentEnableBrowser" type="checkbox" />
+              Enable browser-capable tools for coding worker
+            </label>
+            <p class="form-hint">Uses a broader tools profile so the coding worker can access browser/web automation capabilities.</p>
+          </div>
         </div>
       </div>
 
@@ -1137,6 +1153,7 @@
                 <dd>
                   <span x-show="enableCodingAgent" class="badge badge-indigo">Enabled</span>
                   <span x-show="enableCodingAgent && codingAgentModel" class="text-muted" x-text="codingAgentModel"></span>
+                  <span x-show="enableCodingAgent && codingAgentEnableBrowser" class="badge badge-sky">Browser Enabled</span>
                   <span x-show="!enableCodingAgent" class="text-muted">Disabled</span>
                 </dd>
               </div>

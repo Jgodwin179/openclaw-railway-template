@@ -177,6 +177,17 @@ openclaw models set provider/model-id
 
 For example: `openclaw models set anthropic/claude-sonnet-4-20250514` or `openclaw models set openai/gpt-4-turbo`. Use `openclaw models list --all` to see available models.
 
+**Q: My coding worker says it has no browser tools. How do I enable them?**
+
+A: Open `/setup`, go to the **Coding Worker Agent** card, enable **"Enable browser-capable tool profile"**, then click **Setup Coding Worker**.  
+You can also enable this during initial setup in Step 1.
+
+If your browser automation stack is not installed yet, open `/tui` and run:
+
+```bash
+npx playwright install chromium
+```
+
 **Q: My config seems broken or I'm getting strange errors. How do I fix it?**
 
 A: Go to `/setup` and click the "Run Doctor" button. This runs `openclaw doctor --repair` which performs health checks on your gateway and channels, creates a backup of your config, and removes any unrecognized or corrupted configuration keys.
